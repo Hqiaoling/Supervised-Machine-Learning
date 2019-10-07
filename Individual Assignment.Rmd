@@ -1,0 +1,130 @@
+---
+title: "BA810 individual assignement"
+author: "Qiaoling Huang (U20421641)"
+date: "10/5/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+```{r}
+install.packages("glmnet")
+library(tidyverse)
+library(magrittr)
+library(ggplot2)
+library(ggthemes)
+library(glmnet)
+theme_set(theme_bw())
+```
+## Load the CA housing Dataset
+```{r}
+getwd()
+dd <- read_csv("../housing.csv")
+glimpse(dd)
+```
+
+The total_bedrooms column has missing data that we are going to impute.
+```{r}
+total_bedrooms_median <- median(dd$total_bedrooms, na.rm = TRUE)
+dd <- dd %>%
+replace_na(list("total_bedrooms" = total_bedrooms_median))
+dd
+```
+
+Split dataset in train and test.
+```{r}
+# use this piece of code as is
+train_offsets <- seq(5000)
+test_offsets <- 15000 + seq(3000)
+x_data <- model.matrix( ~ -1 + total_rooms + total_bedrooms +
+households + housing_median_age +
+population + median_income + ocean_proximity, dd)
+# outcome is median house value in millions
+y_data <- dd$median_house_value / 1e6
+x_train <- x_data[train_offsets, ]
+y_train <- y_data[train_offsets]
+x_test <- x_data[test_offsets, ]
+y_test <- y_data[test_offsets]
+```
+
+## Run Lasso regression
+```{r}
+est <- glmnet(x_train, y_train, alpha = 1, nlambda = 100)
+est$lambda
+plot(est)
+```
+
+Next, we will use each of these 100 models to create predictions for both train and test.
+```{r}
+y_train_hat<- predict(est, s = est$lambda, newx = x_train)
+y_test_hat <- predict(est, s = est$lambda, newx = x_test)
+
+mse_train=vector()
+mse_test=vector()
+for (i in 1:length(est$lambda)) {
+  mse_train[i] <- mean((y_train - y_train_hat[,i])^2)
+  mse_test[i] <- mean((y_test - y_test_hat[,i])^2)
+}
+mse_train
+mse_test
+plot(mse_train)
+plot(mse_test)
+```
+Choose the lowest MSE for train and test
+```{r}
+lambda_min_mse_train <- est$lambda[which.min(mse_train)]
+lambda_min_mse_test <- est$lambda[which.min(mse_test)]
+lambda_min_mse_train
+lambda_min_mse_test
+```
+
+## Aggregate all MSEs in a single dataset
+Create a tibble of train MSEs and lambdas
+```{r}
+dd_mse <- tibble( 
+  lambda = est$lambda,
+  mse = mse_train,
+  dataset = "Train"
+)
+
+dd_mse <- rbind(dd_mse, tibble(
+  lambda = est$lambda,
+  mse = mse_test,
+  dataset = "Test"
+))
+
+dd_mse
+```
+
+## Plot the MSEs
+```{r}
+mins <- dd_mse %>% 
+  group_by(dataset) %>% 
+  filter(mse == min(mse))
+
+dd_mse %>% 
+  ggplot(aes(lambda, mse, color = dataset))+
+  geom_line()+
+  scale_x_reverse()+
+   labs(color = "Dataset",
+       x = "λ",
+       y = "MSE")+
+  geom_point(data = mins, aes(x = lambda, y = mse))+
+  theme_classic()
+
+
+```
+
+## Discuss the results of the best fitting model
+```{r}
+print(lambda_min_mse_test)
+coef(est, s = lambda_min_mse_test)
+```
+
+If I am considering investing in CA real estate, I will mainly focus on median_income, ocean_proximity<1H ocrean, and ocean_proximityINLAND as the coefficients shows these variables have significant correlation. Although total_bedrooms has correlation, but the coefficient is too small so I think there is no need to worry about.
+
+## Collabration statement
+I completed most of the assignment by myself based on reading the text book from page 251 to page 255. Meanwhile, Zhang Hang from cohort A taught me writing the code to create a vector contains 100 MSE. And Shangkun Zuo from cohort B taught me the coefficient part. 
